@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "1599451409037301853"
+      "templateHash": "10083369657649954694"
     }
   },
   "parameters": {
@@ -97,10 +97,10 @@
       "name": "[format('{0}-pip', parameters('sandboxName'))]",
       "location": "[parameters('location')]",
       "sku": {
-        "name": "Basic"
+        "name": "Standard"
       },
       "properties": {
-        "publicIPAllocationMethod": "Dynamic"
+        "publicIPAllocationMethod": "Static"
       }
     },
     {
