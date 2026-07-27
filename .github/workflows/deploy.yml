@@ -1,0 +1,159 @@
+name: Deploy Azure Sandbox Infrastructure
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: rg-dev-sandbox-01
+  AZURE_LOCATION: centralindia
+  TEMPLATE_FILE: infra/main.bicep
+  PARAMETER_FILE: infra/main.bicepparam
+
+
+jobs:
+
+  # -------------------------------
+  # Job 1: Validate Infrastructure
+  # -------------------------------
+  validate:
+
+    name: Validate Bicep Template
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+
+      - name: Validate Bicep Template
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            echo "Validating Bicep template..."
+
+            az deployment group validate \
+              --resource-group $AZURE_RESOURCE_GROUP \
+              --template-file $TEMPLATE_FILE \
+              --parameters @$PARAMETER_FILE
+
+            echo "Bicep validation completed successfully"
+
+
+
+  # -------------------------------
+  # Job 2: Deploy Infrastructure
+  # -------------------------------
+  deploy:
+
+    name: Deploy Azure Infrastructure
+    needs: validate
+    runs-on: ubuntu-latest
+
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+
+      - name: Create Resource Group If Missing
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+
+            echo "Checking Resource Group..."
+
+            az group create \
+              --name $AZURE_RESOURCE_GROUP \
+              --location $AZURE_LOCATION
+
+            echo "Resource Group ready"
+
+
+
+      - name: Deploy Bicep Infrastructure
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+
+            echo "Starting Infrastructure Deployment..."
+
+            az deployment group create \
+              --resource-group $AZURE_RESOURCE_GROUP \
+              --template-file $TEMPLATE_FILE \
+              --parameters @$PARAMETER_FILE
+
+            echo "Deployment Completed"
+
+
+
+  # -------------------------------
+  # Job 3: Verify Deployment
+  # -------------------------------
+  verify:
+
+    name: Verify Deployment
+    needs: deploy
+    runs-on: ubuntu-latest
+
+
+    steps:
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+
+      - name: Check Resources
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+
+            echo "Checking deployed resources..."
+
+            az resource list \
+              --resource-group $AZURE_RESOURCE_GROUP \
+              --output table
+
+
+            echo "Azure Sandbox Provisioning Successful"
+
+
+
+      - name: Workflow Summary
+        run: |
+
+          echo "## Azure Sandbox Provisioning Report" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "✅ Bicep validation completed" >> $GITHUB_STEP_SUMMARY
+
+          echo "✅ Azure authentication successful" >> $GITHUB_STEP_SUMMARY
+
+          echo "✅ Resource Group verified" >> $GITHUB_STEP_SUMMARY
+
+          echo "✅ Infrastructure deployment completed" >> $GITHUB_STEP_SUMMARY
+
+          echo "✅ Deployment verification completed" >> $GITHUB_STEP_SUMMARY
