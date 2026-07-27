@@ -1,16 +1,14 @@
 #!/bin/bash
 
-echo "========================================="
-echo " Azure Sandbox Cleanup"
-echo "========================================="
+if [ $# -ne 1 ]; then
+    echo "Usage:"
+    echo "./scripts/cleanup.sh <resource-group>"
+    exit 1
+fi
 
-RESOURCE_GROUP="rg-sandbox-platform"
-
-echo "Deleting Resource Group..."
+RESOURCE_GROUP=$1
 
 az group delete \
     --name $RESOURCE_GROUP \
-    --yes
-
-echo ""
-echo "Cleanup completed."
+    --yes \
+    --no-wait

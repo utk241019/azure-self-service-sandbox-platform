@@ -18,7 +18,7 @@ param adminPassword string
 //------------------------------------------------
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: '${sandboxName}storage'
+  name: '${sandboxName}storageutk'
 
   location: location
 
