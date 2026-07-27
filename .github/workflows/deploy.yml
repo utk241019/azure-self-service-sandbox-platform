@@ -2,28 +2,41 @@ name: Deploy Azure Sandbox Infrastructure
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+    inputs:
+      resourceGroup:
+        description: 'Resource Group Name'
+        required: true
+        default: 'rg-dev-sandbox-01'
+
+      sandboxName:
+        description: 'Sandbox Name'
+        required: true
+        default: 'sandbox01'
+
+      location:
+        description: 'Azure Region'
+        required: true
+        default: 'centralindia'
+
+      adminUsername:
+        description: 'VM Username'
+        required: true
+        default: 'azureuser'
+
+      adminPassword:
+        description: 'VM Password'
+        required: true
 
 permissions:
-  id-token: write
   contents: read
-
-env:
-  AZURE_RESOURCE_GROUP: rg-dev-sandbox-01
-  AZURE_LOCATION: centralindia
-  TEMPLATE_FILE: infra/main.bicep
-  PARAMETER_FILE: infra/main.bicepparam
-
 
 jobs:
 
-  # -------------------------------
-  # Job 1: Validate Infrastructure
-  # -------------------------------
-  validate:
+  # ==========================================
+  # Job 1 - Validate Bicep
+  # ==========================================
 
+  validate:
     name: Validate Bicep Template
     runs-on: ubuntu-latest
 
@@ -32,128 +45,159 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-
-      - name: Login to Azure
+      - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
 
+      - name: Build Bicep Template
+        run: |
+          echo "Building Bicep template..."
+          az bicep build --file bicep/main.bicep
+          echo "Bicep build successful"
 
-      - name: Validate Bicep Template
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
-            echo "Validating Bicep template..."
+      - name: Validate Deployment
+        run: |
+          echo "Validating deployment..."
 
-            az deployment group validate \
-              --resource-group $AZURE_RESOURCE_GROUP \
-              --template-file $TEMPLATE_FILE \
-              --parameters @$PARAMETER_FILE
+          az group create \
+            --name "${{ github.event.inputs.resourceGroup }}" \
+            --location "${{ github.event.inputs.location }}"
 
-            echo "Bicep validation completed successfully"
+          az deployment group validate \
+            --resource-group "${{ github.event.inputs.resourceGroup }}" \
+            --template-file bicep/main.bicep \
+            --parameters \
+              sandboxName="${{ github.event.inputs.sandboxName }}" \
+              location="${{ github.event.inputs.location }}" \
+              adminUsername="${{ github.event.inputs.adminUsername }}" \
+              adminPassword="${{ github.event.inputs.adminPassword }}"
 
+          echo "Validation completed successfully"
 
+  # ==========================================
+  # Job 2 - Deploy Infrastructure
+  # ==========================================
 
-  # -------------------------------
-  # Job 2: Deploy Infrastructure
-  # -------------------------------
   deploy:
-
     name: Deploy Azure Infrastructure
     needs: validate
     runs-on: ubuntu-latest
-
 
     steps:
 
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
 
       - name: Create Resource Group If Missing
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
+        run: |
+          echo "Ensuring Resource Group exists..."
 
-            echo "Checking Resource Group..."
-
-            az group create \
-              --name $AZURE_RESOURCE_GROUP \
-              --location $AZURE_LOCATION
-
-            echo "Resource Group ready"
-
-
+          az group create \
+            --name "${{ github.event.inputs.resourceGroup }}" \
+            --location "${{ github.event.inputs.location }}"
 
       - name: Deploy Bicep Infrastructure
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
+        run: |
+          echo "Starting infrastructure deployment..."
 
-            echo "Starting Infrastructure Deployment..."
+          az deployment group create \
+            --resource-group "${{ github.event.inputs.resourceGroup }}" \
+            --template-file bicep/main.bicep \
+            --parameters \
+              sandboxName="${{ github.event.inputs.sandboxName }}" \
+              location="${{ github.event.inputs.location }}" \
+              adminUsername="${{ github.event.inputs.adminUsername }}" \
+              adminPassword="${{ github.event.inputs.adminPassword }}"
 
-            az deployment group create \
-              --resource-group $AZURE_RESOURCE_GROUP \
-              --template-file $TEMPLATE_FILE \
-              --parameters @$PARAMETER_FILE
+          echo "Deployment completed successfully"
 
-            echo "Deployment Completed"
+  # ==========================================
+  # Job 3 - Verify Deployment
+  # ==========================================
 
-
-
-  # -------------------------------
-  # Job 3: Verify Deployment
-  # -------------------------------
   verify:
-
     name: Verify Deployment
     needs: deploy
     runs-on: ubuntu-latest
-
 
     steps:
 
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
 
+      - name: Get VM Information
+        id: vminfo
+        run: |
+          VM_NAME="${{ github.event.inputs.sandboxName }}-vm"
 
-      - name: Check Resources
-        uses: azure/cli@v2
-        with:
-          inlineScript: |
+          PUBLIC_IP=$(az vm show \
+            --resource-group "${{ github.event.inputs.resourceGroup }}" \
+            --name "$VM_NAME" \
+            -d \
+            --query publicIps \
+            -o tsv)
 
-            echo "Checking deployed resources..."
+          PRIVATE_IP=$(az vm show \
+            --resource-group "${{ github.event.inputs.resourceGroup }}" \
+            --name "$VM_NAME" \
+            -d \
+            --query privateIps \
+            -o tsv)
 
-            az resource list \
-              --resource-group $AZURE_RESOURCE_GROUP \
-              --output table
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          echo "private_ip=$PRIVATE_IP" >> $GITHUB_OUTPUT
+          echo "vm_name=$VM_NAME" >> $GITHUB_OUTPUT
 
+      - name: List Resources
+        run: |
+          echo "Deployed resources:"
 
-            echo "Azure Sandbox Provisioning Successful"
-
-
+          az resource list \
+            --resource-group "${{ github.event.inputs.resourceGroup }}" \
+            --output table
 
       - name: Workflow Summary
         run: |
-
           echo "## Azure Sandbox Provisioning Report" >> $GITHUB_STEP_SUMMARY
-
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          echo "### Deployment Status" >> $GITHUB_STEP_SUMMARY
           echo "✅ Bicep validation completed" >> $GITHUB_STEP_SUMMARY
-
           echo "✅ Azure authentication successful" >> $GITHUB_STEP_SUMMARY
-
-          echo "✅ Resource Group verified" >> $GITHUB_STEP_SUMMARY
-
           echo "✅ Infrastructure deployment completed" >> $GITHUB_STEP_SUMMARY
-
           echo "✅ Deployment verification completed" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Environment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Resource Group:** ${{ github.event.inputs.resourceGroup }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Sandbox Name:** ${{ github.event.inputs.sandboxName }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Location:** ${{ github.event.inputs.location }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **VM Name:** ${{ steps.vminfo.outputs.vm_name }}" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Network Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Public IP:** ${{ steps.vminfo.outputs.public_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Private IP:** ${{ steps.vminfo.outputs.private_ip }}" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### SSH Connection" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "ssh ${{ github.event.inputs.adminUsername }}@${{ steps.vminfo.outputs.public_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
